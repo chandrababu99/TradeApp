@@ -1,0 +1,2 @@
+# TradeApp
+CG Trade App
