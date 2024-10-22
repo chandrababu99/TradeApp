@@ -28,8 +28,8 @@ class CandleProcessor {
     }
 
     void addTicks(const std::vector<kc::tick>& ticks) {
-        Logger::getInstance().log(
-            Logger::DEBUG, "addTicks: started ", ticks.size(), " ticks");
+        //Logger::getInstance().log(
+          //  Logger::DEBUG, "addTicks: started ", ticks.size(), " ticks");
 
         std::lock_guard<std::mutex> lock(candleMutex);
         tickQueue.insert(tickQueue.end(), ticks.begin(), ticks.end());
@@ -55,7 +55,7 @@ class CandleProcessor {
     }
 
     void updateCandle(const double& instrumentToken, const double& lastPrice) {
-        Logger::getInstance().log(Logger::DEBUG, "Update Candle : started ");
+        //Logger::getInstance().log(Logger::DEBUG, "Update Candle : started ");
 
         auto currentTime = std::chrono::system_clock::now();
         auto endTime = getCandleEndTime(currentTime);

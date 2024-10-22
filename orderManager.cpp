@@ -1,10 +1,9 @@
 
-#include "Types.h"
 #include "Logger.h"
-#include <mutex>
+#include "Types.h"
 #include <condition_variable>
+#include <mutex>
 #include <unordered_map>
-
 
 // OrderManager handles placing buy and sell orders based on detected patterns
 class OrderManager {
@@ -18,14 +17,19 @@ class OrderManager {
     std::mutex scripDataMutex;
     std::condition_variable sdMutex_cv;
 
-
-
     OrderManager() {}
 
   public:
     static OrderManager& getInstance() {
         static OrderManager instance;
         return instance;
+    }
+    ~OrderManager() {
+        /*         for (auto& thread : orderMonitoringThreads) {
+                   if (thread.joinable()) {
+                   thread.join();
+            }
+        }*/
     }
 
     void updateTickData(const std::vector<kc::tick>& ticks) {
@@ -40,30 +44,71 @@ class OrderManager {
         OrderscripDataMap[instrumentToken] = scripData;
         sdMutex_cv.notify_all();
     }
-    void startOrderMonitoring(const double& instrumentToken, ScripData& scripData) {
-        Logger::getInstance().log(Logger::DEBUG, "startOrderMonitoring for ", instrumentToken);
+    void startOrderMonitoring(
+        const double& instrumentToken, ScripData& scripData) {
+        Logger::getInstance().log(
+            Logger::DEBUG, "startOrderMonitoring for ", instrumentToken);
+        if (scripData.DayHighReversalIdentified == true) {
+            scripData.DayHighReversalIdentified = false;
+        }
+
+        if (scripData.DayLowReversalIdentified == true) {
+            scripData.DayLowReversalIdentified = false;
+        }
+
         orderMonitoringThreads[instrumentToken] = std::thread(
             &OrderManager::monitorForTrade, this, instrumentToken, scripData);
     }
-    void monitorForTrade(const double& instrumentToken, const ScripData& scripData) {
+    void monitorForTrade(
+        const double& instrumentToken, const ScripData& scripData) {
         bool tradeExecuted = false;
-        //TO DO Entry can be 0.1% above/below the signal candle.
+        double stopLoss = 0;
+        // TO DO Entry can be 0.1% above/below the signal candle.
         while (!tradeExecuted && !stopMonitoring) {
             double currentPrice = getCurrentPrice(instrumentToken);
             if (currentPrice > scripData.signalCandleHigh) {
-            //Buy Call 
-            // placeBuyOrder(instrumentToken, currentPrice, "CE");
-            tradeExecuted = true;
-            Logger::getInstance().log(Logger::DEBUG, "***** Trade Executed for CE ", instrumentToken, "at price", currentPrice);
+                // Buy Call
+                //  placeBuyOrder(instrumentToken, currentPrice, "CE");
+                tradeExecuted = true;
+                stopLoss = scripData.signalCandleLow;
+                Logger::getInstance().log(Logger::DEBUG,
+                    "***** Trade Executed for CE ", instrumentToken, "at price",
+                    currentPrice);
 
+                auto currentTime = std::chrono::system_clock::now();
+                time_t raw_time =
+                    std::chrono::system_clock::to_time_t(currentTime);
+                std::tm* time_info = std::localtime(&raw_time);
+
+                // Align to nearest 15-minute interval
+                int minutes = time_info->tm_min;
+                int remainder = minutes % 15;
+                auto minutesToWait = 30 - remainder;
+
+                startCallExitMonitoring(
+                    instrumentToken, stopLoss, currentTime, minutesToWait);
 
             } else if (currentPrice < scripData.signalCandleLow) {
                 // Buy put
-            // placeBuyOrder(instrumentToken, currentPrice, "PE");
-            //    startSellMonitoring(instrumentToken, stopLoss);
-            tradeExecuted = true;
-            Logger::getInstance().log(Logger::DEBUG, "***** Trade Executed for PE", instrumentToken, "at price", currentPrice);
+                // placeBuyOrder(instrumentToken, currentPrice, "PE");
+                //    startSellMonitoring(instrumentToken, stopLoss);
+                tradeExecuted = true;
+                stopLoss = scripData.signalCandleHigh;
+                Logger::getInstance().log(Logger::DEBUG,
+                    "***** Trade Executed for PE", instrumentToken, "at price",
+                    currentPrice);
+                auto currentTime = std::chrono::system_clock::now();
+                time_t raw_time =
+                    std::chrono::system_clock::to_time_t(currentTime);
+                std::tm* time_info = std::localtime(&raw_time);
 
+                // Align to nearest 15-minute interval
+                int minutes = time_info->tm_min;
+                int remainder = minutes % 15;
+                auto minutesToWait = 30 - remainder;
+
+                startPutExitMonitoring(
+                    instrumentToken, stopLoss, currentTime, minutesToWait);
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(500));
         }
@@ -78,45 +123,77 @@ class OrderManager {
         return OrderscripDataMap[instrumentToken];
     }
 
-    void startSellMonitoring(const double& instrumentToken, double stopLoss) {
-        std::thread([this, instrumentToken, stopLoss] {
-            while (true) {
-                double currentPrice = getCurrentPrice(instrumentToken);
-
-                if (currentPrice <= stopLoss) {
-                    //placeSellOrder(instrumentToken, currentPrice);
-                    break;
-                }
-                std::this_thread::sleep_for(std::chrono::milliseconds(500)); 
-            }
-        }).detach(); // Detached thread to handle sell monitoring asynchronously
-    }
-
-    void startCallExitMonitoring(const double& instrumentToken, double& stopLoss){
-            std::thread([this, instrumentToken, stopLoss] {
+    void startCallExitMonitoring(const double& instrumentToken,
+        double& stopLoss,
+        std::chrono::_V2::system_clock::time_point& currentTime,
+        int& minsToWait) {
+        std::thread([this, instrumentToken, &stopLoss, currentTime,
+                        minsToWait] {
             while (true) {
                 double currentPrice = getCurrentPrice(instrumentToken);
 
                 if (currentPrice < stopLoss) {
-                    //placeSellOrder(instrumentToken, currentPrice);
+                    // placeSellOrder(instrumentToken, currentPrice);
+                    Logger::getInstance().log(Logger::DEBUG,
+                        "***** Exit CE after SL/Target hit ", instrumentToken,
+                        " at price", currentPrice);
                     break;
                 }
 
-                std::this_thread::sleep_for(std::chrono::milliseconds(500)); 
+                std::this_thread::sleep_for(std::chrono::milliseconds(500));
+                auto duration =
+                    std::chrono::duration_cast<std::chrono::minutes>(
+                        std::chrono::system_clock::now() - currentTime);
+                if (duration.count() > minsToWait) {
+                    auto scripData = getCandleData(instrumentToken);
+                    Candle& currentCandle = scripData.candles.back();
+                    if (currentCandle.color == "Red") {
+                        stopLoss = currentCandle.low;
+                    }
+                }
             }
         }).detach();
-
     }
-    void startPutExitMonitoring(const double& instrumentToken, double& stopLoss){}
+    void startPutExitMonitoring(const double& instrumentToken, double& stopLoss,
+        std::chrono::_V2::system_clock::time_point& currentTime,
+        int& minsToWait) {
+        std::thread([this, instrumentToken, &stopLoss, currentTime,
+                        minsToWait] {
+            while (true) {
+                double currentPrice = getCurrentPrice(instrumentToken);
 
-    void placeBuyOrder(const double& instrumentToken, const double& buyPrice, const std::string& OpType ) {
+                if (currentPrice > stopLoss) {
+                    // placeSellOrder(instrumentToken, currentPrice);
+                    Logger::getInstance().log(Logger::DEBUG,
+                        "***** Exit PE after SL/Target hit ", instrumentToken,
+                        " at price", currentPrice);
+                    break;
+                }
+
+                std::this_thread::sleep_for(std::chrono::milliseconds(500));
+                auto duration =
+                    std::chrono::duration_cast<std::chrono::minutes>(
+                        std::chrono::system_clock::now() - currentTime);
+                if (duration.count() > minsToWait) {
+                    auto scripData = getCandleData(instrumentToken);
+                    Candle& currentCandle = scripData.candles.back();
+                    if (currentCandle.color == "Green") {
+                        stopLoss = currentCandle.high;
+                    }
+                }
+            }
+        }).detach();
+    }
+
+    void placeBuyOrder(const double& instrumentToken, const double& buyPrice,
+        const std::string& OpType) {
         std::lock_guard<std::mutex> lock(orderMutex);
         // Place buy order logic
     }
 
-    void placeSellOrder(const double& instrumentToken, const double& sellPrice, const std::string Optype) {
+    void placeSellOrder(const double& instrumentToken, const double& sellPrice,
+        const std::string Optype) {
         std::lock_guard<std::mutex> lock(orderMutex);
         // Place sell order logic (based on stop loss or target)
     }
-
 };
