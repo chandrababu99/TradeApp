@@ -28,8 +28,8 @@ class CandleProcessor {
     }
 
     void addTicks(const std::vector<kc::tick>& ticks) {
-        //Logger::getInstance().log(
-          //  Logger::DEBUG, "addTicks: started ", ticks.size(), " ticks");
+        // Logger::getInstance().log(
+        //   Logger::DEBUG, "addTicks: started ", ticks.size(), " ticks");
 
         std::lock_guard<std::mutex> lock(candleMutex);
         tickQueue.insert(tickQueue.end(), ticks.begin(), ticks.end());
@@ -39,15 +39,12 @@ class CandleProcessor {
 
     void processTicks() {
         // Logger::getInstance().log(Logger::DEBUG, "Process Ticks: started ");
-
         std::vector<kc::tick> ticksToProcess;
         {
             std::unique_lock<std::mutex> lock(candleMutex);
             tickCondition.wait(lock, [this] { return !tickQueue.empty(); });
             ticksToProcess.swap(tickQueue);
         }
-       // Logger::getInstance().log(
-         //   Logger::DEBUG, "Process Ticks: Working on local copy ");
 
         for (const auto& tick : ticksToProcess) {
             updateCandle(tick.instrumentToken, tick.lastPrice);
@@ -55,12 +52,12 @@ class CandleProcessor {
     }
 
     void updateCandle(const double& instrumentToken, const double& lastPrice) {
-        //Logger::getInstance().log(Logger::DEBUG, "Update Candle : started ");
+        // Logger::getInstance().log(Logger::DEBUG, "Update Candle : started ");
 
         auto currentTime = std::chrono::system_clock::now();
-        auto endTime = getCandleEndTime(currentTime);
         // Check if this instrument is being processed for the first time
         if (lastCandleTimes.find(instrumentToken) == lastCandleTimes.end()) {
+            auto endTime = getCandleEndTime(currentTime);
             Candle newCandle = { lastPrice, lastPrice, lastPrice, lastPrice,
                 "Green", currentTime, endTime };
             ScripData scripData = { { newCandle }, lastPrice, lastPrice };
@@ -71,7 +68,8 @@ class CandleProcessor {
         }
 
         auto& currentCandle = scripDataMap[instrumentToken].candles.back();
-        if (currentCandle.endTime <= currentCandle.startTime) {
+
+        if (currentCandle.endTime <= currentTime) {
             finalizeCandle(instrumentToken, lastPrice);
         } else {
 
@@ -97,20 +95,13 @@ class CandleProcessor {
         lastCandle.candleToIndexRatio = (candleSize / lastCandle.high) * 100;
 
         // Logging the candle
-        Logger::getInstance().log(Logger::DEBUG, "Scrip: ", instrumentToken,
-            " | Open: ", lastCandle.open, ", High: ", lastCandle.high,
-            ", Low: ", lastCandle.low, ", Close: ", lastCandle.close, "\n",
-            " | Candle Color: ", lastCandle.color,
-            " | Day High: ", scripData.dayHigh, ", Day Low: ", scripData.dayLow,
-            "\n", " | bodyRatio: ", lastCandle.bodyRatio,
-            ", candleToIndexRatio: ", lastCandle.candleToIndexRatio);
-        auto timenow = std::chrono::system_clock::to_time_t(lastCandle.endTime);
-        Logger::getInstance().log(Logger::DEBUG, ", Time : ", ctime(&timenow));
+        logCandle(instrumentToken, scripData);
 
         if (!(scripData.DayHighReversalIdentified == true ||
                 scripData.DayLowReversalIdentified == true)) {
             PatternDetector::getInstance().detectPattern(instrumentToken, scripData);
         }
+
         OrderManager::getInstance().updateCandleData(instrumentToken, scripData);
 
         // Start a new candle
@@ -125,7 +116,7 @@ class CandleProcessor {
         }
 
         // Update the last candle time for this scrip
-        lastCandleTimes[instrumentToken] = std::chrono::system_clock::now();
+        lastCandleTimes[instrumentToken] = currentTime;
     }
 
     void updateDayHighLow(
@@ -144,13 +135,36 @@ class CandleProcessor {
         int minutes = time_info->tm_min;
         int remainder = minutes % 15;
         time_info->tm_min -= remainder;
-        if (remainder > 0) { time_info->tm_min += 15; }
+        time_info->tm_min += 15;
         // Set seconds to zero
         time_info->tm_sec = 0;
         if (time_info->tm_min == 60) {
             time_info->tm_min = 0;
             time_info->tm_hour++;
         }
+        // std::cout << "End  time: " << std::put_time(time_info, "%Y-%m-%d
+        // %H:%M:%S") << std::endl;
         return std::chrono::system_clock::from_time_t(std::mktime(time_info));
+    }
+
+    void logCandle(const double& instrumentToken, ScripData& Data) {
+        std::string scripName {};
+        if (instrumentToken == 256265) {
+            scripName = "NIFTY";
+        } else if (instrumentToken == 260105) {
+            scripName = "BANK NIFTY";
+        }
+
+        Candle& candleData = Data.candles.back();
+        Logger::getInstance().log(Logger::DEBUG,
+            "**************** \n** Scrip: ", scripName,
+            "\n** Open: ", candleData.open, "\t High: ", candleData.high,
+            "\n** Low: ", candleData.low, "\t Close: ", candleData.close,
+            "\n*** Candle Color: ", candleData.color,
+            "\n** Day High: ", Data.dayHigh, "\t Day Low: ", Data.dayLow,
+            "\n bodyRatio: ", candleData.bodyRatio,
+            "\t WickRatio: ", candleData.wickRatio,
+            "\t candleToIndexRatio: ", candleData.candleToIndexRatio,
+            "\n********************");
     }
 };

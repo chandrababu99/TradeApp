@@ -19,7 +19,9 @@ class ScripDataReceiver {
     ScripDataReceiver(const std::string& apiKey, const std::string& apiSecret, const std::string& reqToken) {
         try {
             Logger::getInstance().log(Logger::DEBUG, "Application started.");
-            
+                 //           tickProcessingThread =
+                //std::thread(&ScripDataReceiver::processTicksInThread, this);
+            ///*
                 Kite = new kc::kite(apiKey);
                 Ticker = new kc::ticker(apiKey, 5, true, 5);
 
@@ -58,9 +60,8 @@ class ScripDataReceiver {
                 };
                 Ticker->connect();
                 Ticker->run();
-                        
+                     // */  
 
-            // Ticker->stop();
         } catch (kc::kiteppException& e) {
             std::cerr << e.what() << ", " << e.code() << ", " << e.message()
                       << '\n';
@@ -70,10 +71,10 @@ class ScripDataReceiver {
     }
 
     ~ScripDataReceiver() {
+        Ticker->stop();
         tickProcessingThread.join();
-        //  Ticker->stop();
-        //  delete Ticker;
-        //  delete Kite;
+        delete Ticker;
+        delete Kite;
     }
 
     void onConnect(kc::ticker* ws) {
@@ -104,7 +105,7 @@ class ScripDataReceiver {
     void processTicksInThread() {
         while (true) {
             // Process tick data every second in this thread
-            Logger::getInstance().log(Logger::DEBUG, "processTicksInThread: started ");
+            //Logger::getInstance().log(Logger::DEBUG, "processTicksInThread: started ");
 
             CandleProcessor::getInstance().processTicks();
 
@@ -156,13 +157,16 @@ int main(int argc, char* argv[]) {
 
     ScripDataReceiver receiver(apiKey, apiSecret, reqToken);
     Logger::getInstance().setLogLevel(Logger::DEBUG);
-    /*auto j = 1;
+  /*  
+    auto j = 1;
 
     while (j < 1505) {
         //Logger::getInstance().log(Logger::DEBUG, "J now : ", j);
         std::vector<kc::tick> tickmap = generateRandomTicks(2);
 
         CandleProcessor::getInstance().addTicks(tickmap);
+        OrderManager::getInstance().updateTickData(tickmap);
+
         tickmap.clear();
         j++;
 

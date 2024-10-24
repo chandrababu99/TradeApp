@@ -23,7 +23,7 @@ class PatternDetector {
 
             // if (currentCandle.bodyRatio >= 80) {
 
-            Logger::getInstance().log(Logger::DEBUG, " Inside Detect  Pattern *");
+            Logger::getInstance().log(Logger::DEBUG, " ### Inside Detect Pattern for :", instrumentToken);
             auto candleToDayLowRatio =
                 (std::abs(currentCandle.low - scripData.dayLow) / scripData.dayLow) * 100;
             auto candleToDayHighRatio =
@@ -46,7 +46,8 @@ class PatternDetector {
                 scripData.signalCandleHigh = (currentCandle.high > scripData.dayHigh) ? currentCandle.high : scripData.dayHigh;
                 scripData.signalCandleLow = (currentCandle.low < scripData.dayLow) ? currentCandle.low : scripData.dayLow;
                 Logger::getInstance().log(Logger::DEBUG, "***** Pattern Identified *****");
-                OrderManager::getInstance().startOrderMonitoring(instrumentToken, scripData);
+
+                OrderManager::getInstance().startOrderMonitoring(instrumentToken, scripData.signalCandleHigh,scripData.signalCandleLow);
             }
             //}
         }
